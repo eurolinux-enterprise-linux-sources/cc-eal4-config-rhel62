@@ -1,0 +1,65 @@
+# /etc/ssh/sshd_config
+#
+# CC Base / MLS mode configuration. Please read the Evaluated
+# Configuration Guide before making changes.
+#
+# You MAY select a subset out of following ciphers:
+# aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,aes192-cbc,aes256-cbc,3des-cbc
+Ciphers aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,aes192-cbc,aes256-cbc,3des-cbc
+
+# You MAY select a subset out of the following HMACs:
+# hmac-sha1
+# Note: any other HMACs are not allowed in FIPS 140-2 mode
+MACs hmac-sha1
+
+# Configure password-based login. If password-based
+# authentication is enabled, you MUST use the PAM
+# library exclusively.
+# You MAY disable UsePAM by setting both variables to "no"
+UsePAM yes
+ChallengeResponseAuthentication yes
+
+# You MAY disable key-based authentication
+PubkeyAuthentication yes
+
+# The ssh-keycat retrieves the content of the ~/.ssh/authorized_keys
+# of an user in any environment. This includes environments with
+# polyinstantiation of home directories and SELinux MLS policy enabled.
+# You MAY disable the following lines - however, key-based authentication
+# will NOT work in an MLS environment.
+#AuthorizedKeysCommand /usr/libexec/openssh/ssh-keycat
+#AuthorizedKeysCommandRunAs root
+
+# You MAY change "X11Forwarding" to "yes"
+X11Forwarding no
+
+# You MAY specify a different file containing
+# the banner information
+#Banner /etc/issue.net
+
+####################################################
+# All options below must not be changed as otherwise
+# you leave the evaluated configuration specified
+# the Base and MLS mode
+
+# Authentication function behavior
+PasswordAuthentication no
+PermitRootLogin no
+PermitEmptyPasswords no
+
+# No other authentication methods allowed
+IgnoreRhosts yes
+RhostsRSAAuthentication no
+HostbasedAuthentication no
+RSAAuthentication no
+KerberosAuthentication no
+GSSAPIAuthentication no
+
+# Extra layer of security that MUST be enabled
+UsePrivilegeSeparation yes
+
+# Disallow the obsolete (and insecure) protocol version 1.
+Protocol 2
+
+Subsystem sftp /usr/libexec/openssh/sftp-server
+

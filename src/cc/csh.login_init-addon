@@ -1,0 +1,12 @@
+## CC Base / MLS mode configuration START
+# 
+# This trap prevents the interruption of the execution of /etc/csh.login.
+# To prevent interruption of /etc/csh.login is particularly important for
+# ensuring that the screen saver is started (see the last lines of this
+# file).
+#
+if ($?loginsh && -w "`tty`" && "$TERM" != "screen" ) then
+	onintr -
+endif
+#
+## CC Base / MLS mode configuration END

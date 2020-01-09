@@ -1,0 +1,4 @@
+#%PAM-1.0
+auth	include		system-auth
+# XXX add pam_faillog
+auth	optional	pam_faildelay.so delay=30000000

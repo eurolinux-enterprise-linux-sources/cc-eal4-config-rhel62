@@ -1,0 +1,16 @@
+#!/bin/bash
+#
+# cc		This starts and stops services for the Common Criteria
+#		configuration
+#
+# chkconfig: 2345 40 40
+# description: This starts and stops services for the Common Criteria
+#	       configuration
+#
+# Common Criteria configuration change:
+#
+# udevd must be disabled during interactive operation.
+if killall -0 udevd 2>/dev/null
+then
+	killall udevd 2>/dev/null
+fi

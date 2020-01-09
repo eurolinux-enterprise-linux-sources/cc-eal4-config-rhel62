@@ -1,0 +1,47 @@
+#
+## CC Base / MLS mode configuration START
+#
+# The environment variable of SSH_USE_STRONG_RNG governs the use
+# of the Linux kernel random number generator by the OpenSSH daemon,
+# the client as well as ssh-keygen.
+#
+# If this environment variable is set to 1 the mentioned applications
+# use /dev/random for seeding the OpenSSL deterministic random number
+# generator which is in turn used for generating key material. If this
+# environment variable is set to 0, /dev/urandom is used.
+#
+# The seeding is performed at the following code paths:
+#
+# sshd:       startup of the daemon
+# sshd:       forking of a new child to handle a new incoming connection
+# ssh:        startup of the application
+# ssh-keygen: startup of the application
+#
+# The evaluated configuration requires this variable to be set to a value
+# greater than zero to ensure high-quality seed information to be used.
+# To comply with these requirements set forth by the evaluation, you MUST
+# set this variable to 1 or a larger value as indicated in the following.
+# In addition to enabling this environment variable at this place,
+# you MUST enable the same variable in /etc/profile or /etc/csh.login
+# (as appropriate) to ensure that ssh and ssh-keygen are seeded with
+# /dev/random and be compliant to the evaluated configuration requirements.
+#
+# SSH_USE_STRONG_RNG specifies the number of bytes read from /dev/random.
+# The minimum is 6 bytes - so any value below 6 still implies that 6 bytes
+# are read. The BSI requirements recommend to use 96 bits of entropy and
+# requires 48 bits. Therefore, the absolute minimum is 6 bytes and the
+# default configuration is 12 bytes.
+#
+# NOTE: when setting this variable to a value greater than zero, the
+#       applications will block during seeding or re-seeding until sufficient
+#       data pulled out of /dev/random. This may cause delays in startup or
+#       connection initiation.
+#
+export SSH_USE_STRONG_RNG=12
+#
+# The following environment variable disables the use of the AES-NI
+# Intel processor instruction set. This is required by BSI as the AES-NI
+# instruction set was not subject to evaluation
+export OPENSSL_DISABLE_AES_NI=1
+#
+## CC Base / MLS mode configuration END

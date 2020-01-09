@@ -1,0 +1,12 @@
+## CC Base / MLS mode configuration START
+# 
+# This trap prevents the interruption of the execution of /etc/profile.
+# To prevent interruption of /etc/profile is particularly important for
+# ensuring that the screen saver is started (see the last lines of this
+# file).
+#
+if [ -w $(tty) -a "${TERM%%.*}" != "screen" ] ; then 
+	trap "" 1 2 3 15
+fi
+#
+## CC Base / MLS mode configuration END

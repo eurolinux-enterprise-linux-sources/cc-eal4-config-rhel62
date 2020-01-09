@@ -1,0 +1,15 @@
+service ssh-mls
+{
+        flags           = LABELED IPv6
+	type		= UNLISTED
+	port		= 222
+        socket_type     = stream
+        wait            = no
+        user            = root
+        group           = root
+        server          = /usr/sbin/sshd
+	server_args	= -i
+        log_on_failure  += USERID
+        disable         = no
+}
+

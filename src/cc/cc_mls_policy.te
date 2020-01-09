@@ -1,0 +1,20 @@
+## Customized SELinux policy for CC MLS Mode configuration
+
+policy_module(cc_mls_policy,1.0)
+
+#############################################################################
+### Additional audit
+#############################################################################
+
+gen_require(`
+	attribute domain;
+')
+
+# Audit setting of security relevant process attributes
+# These settings are OPTIONAL
+auditallow domain self:process setcurrent;
+auditallow domain self:process setexec;
+auditallow domain self:process setfscreate;
+auditallow domain self:process setsockcreate;
+#auditallow domain self:process setipccreate; # currently not implemented
+

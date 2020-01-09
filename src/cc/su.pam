@@ -1,0 +1,17 @@
+#%PAM-1.0
+#
+# pam.d/su - PAM su configuration for CC Base / MLS Mode
+#		see the Evaluated Configuration Guide for more info
+#
+
+auth            sufficient      pam_rootok.so
+auth            required        pam_wheel.so use_uid
+auth            include         system-auth
+
+account         sufficient	pam_succeed_if.so uid = 0 use_uid quiet
+account         include         system-auth
+
+password        include		system-auth
+
+session         include         system-auth
+session         optional        pam_xauth.so

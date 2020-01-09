@@ -1,0 +1,1832 @@
+#!/bin/bash
+#
+#   System hardening script for converting a RHEL5/RHEL6 system to the
+#   CC Base or MLS mode at EAL4+ evaluated configuration.
+#
+#   Copyright (C) 2004,2005,2006,2010 Red Hat, Inc.
+#   Changes Copyright (C) 2006 IBM Corporation
+#   Changes (c) Copyright Hewlett-Packard Development Company, L.P., 2007
+#   Changes (c) Copyright Red Hat, Inc., 2010
+#
+#   Licenced under the terms of the GNU Public License.  See the
+#   file COPYING distributed with this one for a description of
+#   your rights and responsibilities.
+#
+#
+# maintainer note on style:
+#  unipolar branches use && or || for readability
+#  variables are in CAPS
+#  backtick expansions $(use parens syntax)
+#  functions are prefixed with a : comment for use with set -x
+#  all code is inside a function (for tracking syntax errors w/set -x)
+#  function names use StudlyCaps
+#  local and readonly are used where appropriate
+#  global vars and constants have a leading _
+#  to check syntax set _CHECK_SYNTAX_ in env and run with bash -x
+#    done this way functions are loaded but Main() is not called
+
+
+:
+: -- %Function Definitions
+:
+
+
+: --ConfigureShellCC
+#  establish shell configuration for CC
+
+ConfigureShellCC() {
+
+    Title " set CC configuration for shells"
+
+    # Don't run again if the alias is already present
+    [ -f /etc/profile.d/cc-configuration.sh ] && return
+
+    if ShallI "Configure the shells"; then
+
+	Log  "Installing cc-configuration.sh into /etc/profile.d/"
+
+	Replace $_PROFILE_D/$_BASH_CC with $_BASE/$_BASH_CC
+	Replace $_PROFILE_D/$_CSH_CC with $_BASE/$_CSH_CC
+    else
+	Log "Configuration of shells declined"
+	_FAILURE=1
+    fi
+}
+
+: --SELinuxShellPrompt
+SELinuxShellPrompt() {
+
+    Title " activate PS1 prompt containing role/level"
+
+    if ShallI "(optional) Print role/level in shell prompt"; then
+    	cat >/etc/profile.d/selinux-prompt.sh <<-'EOF'
+		#!/bin/bash
+
+		if [ ! -z "$PS1" ]
+		then
+		    SEROLE=`secon -rP 2>/dev/null`
+		    SEMLS=`secon -lP 2>/dev/null`
+
+		    PS1="[\u/$SEROLE/$SEMLS@\h \W]\\$ "
+
+		    export PS1
+		fi
+	EOF
+    fi
+}
+
+
+: --Archive
+#  Rename a file to a unique datestamped destination name.
+#  Not atomic, don't use this in directories writable by untrusted users.
+
+Archive() {
+ 
+    local DATE=$(date +"%Y%m%d-%H%M")
+    local K= NAME= N=
+
+    for K in "$@" ; do
+	K=${K%%/}
+	if [ -e "$K" ] ; then
+	    NAME=$K-$DATE
+	    N=0
+	    while [ -e "$NAME" ] ; do
+		NAME=$K-$DATE-$N
+		N=$((N+1))
+	    done
+	    RunWithLog mv "$K" "$NAME"
+	fi
+    done
+}
+
+IEcho() {
+    [ "$_INTERACTIVE" ] && echo "$@"
+}
+
+:  --Ask
+#   take user input string, print response to stdout
+ 
+Ask() {
+ 
+    local ANS= DEFAULT="$2"
+
+    [ "$DEFAULT" ] || DEFAULT=y
+ 
+    # non-interactive operation defaults to answering default to all questions
+    # no output there.
+    if [ "$_INTERACTIVE" ]; then
+	echo -n "$1 [$DEFAULT] " >/dev/tty
+	read ANS
+    	[ -z "$ANS" ] && ANS="$DEFAULT"
+    	Log "*** $1 [$DEFAULT]: $ANS" >/dev/null
+    else
+	ANS="$DEFAULT"
+    	Log "*** $1 [$DEFAULT]: $ANS" >/dev/tty
+    fi
+ 
+    echo "$ANS"
+}
+
+:  --AskYN
+#   take user input for y/n question
+ 
+AskYN() {
+    local ANS=$(Ask "$1 (y/n)" "$2")
+
+    case "$ANS" in
+	[yY]*)
+	    return 0
+	    ;;
+	*)  return 1
+	    ;;
+    esac
+}
+
+:  --CloseLog
+#  you need an explanation?
+
+CloseLog() {
+    [ -e /proc/self/fd/88 ] && exec 88>&-
+}
+
+:  --ConfigureAudit
+#   just in case....
+
+ConfigureAudit() {
+
+    Title " Configure audit subsystem"
+
+    # chkconfig enable of audit daemon will be done in HardenServices
+
+    
+    if ShallI "Update /etc/audit/$_AUDITD_CONF"; then
+	Replace /etc/audit/$_AUDITD_CONF with $_BASE/$_AUDITD_CONF
+    else
+	Log "replacement of $_AUDITD_CONF declined."
+	_FAILURE=1
+    fi
+
+    # the following is only for RHEL6
+    $(cat /etc/redhat-release | grep -q 5) && return
+
+    if [ ! -f /etc/audisp/$_AUDISP_REMOTE ]; then
+	Log "audisp-remote not installed? No configuration changes."
+	return 0
+    fi
+
+    if ShallI "Update /etc/audisp/$_AUDISP_REMOTE"; then
+	Replace /etc/audisp/$_AUDISP_REMOTE with $_BASE/$_AUDISP_REMOTE
+    else
+	Log "replacement of $_AUDISP_REMOTE declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigurePostfix
+ConfigurePostfix() {
+
+    Title " Configure postfix"
+
+    [ -f /etc/postfix/main.cf ] || {
+        Log "postfix not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Update postfix configuration"; then
+
+	WheelUsers=$(grep '^wheel' /etc/group | cut -d: -f4 | sed 's/root,//; s/,/, /g')
+
+	Log "Sending root mail to members of wheel group: $WheelUsers"
+
+	grep -v '^root:' /etc/aliases > /etc/aliases.new
+	echo "root: $WheelUsers" >> /etc/aliases.new
+
+	Replace /etc/aliases removing /etc/aliases.new
+
+	RunWithLog newaliases
+
+	grep -v '^allow_mail_to_commands' < /etc/postfix/main.cf > /etc/postfix/main.cf.new
+	echo "allow_mail_to_commands = alias" >> /etc/postfix/main.cf.new
+
+	Replace /etc/postfix/main.cf removing /etc/postfix/main.cf.new
+
+	# Reload Postfix configuration if postfix is running
+	ps ax | grep -v grep | grep -q postfix && {
+	    RunWithLog /etc/init.d/postfix reload
+	}
+	
+    else
+	Log "postfix configuration declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigureCups
+ConfigureCups() {
+
+    Title "Configure Cups"
+
+    [ -f $_CUPS_DEST/$_CUPS_SERVER ] || {
+        Log "cups not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Configure CUPS for MLS Mode"; then
+        Log  "Configuring CUPS for MLS Mode"
+	Replace $_CUPS_DEST/$_CUPS_SERVER with $_BASE/$_CUPS_SERVER
+	Replace $_CUPS_DEST/$_CUPS_CLIENT with $_BASE/$_CUPS_CLIENT
+	Replace $_CUPS_DEST/$_CUPS_MIMET with $_BASE/$_CUPS_MIMET
+	Replace $_CUPS_DEST/$_CUPS_MIMEC with $_BASE/$_CUPS_MIMEC
+    else
+        Log "reconfiguring CUPS declined"
+        _FAILURE=1
+    fi
+}
+
+:  --ConfigureCron
+ConfigureCron() {
+    Title "Configure Cron"
+
+    local CronConf=/etc/sysconfig/crond
+
+    if ShallI "Configure crond to disable sending mail"; then
+        Log "Configuring crond to disable sending mail"
+
+	sed 's/^CRONDARGS.*/CRONDARGS="-m \/bin\/true"/' \
+	    < $CronConf > $CronConf.new
+                
+	Replace $CronConf removing $CronConf.new
+    else
+        Log "reconfiguring Cron declined"
+        _FAILURE=1
+    fi
+}
+
+:  --ConfigureConsoletype
+ConfigureConsoletype() {
+    Title "Configure Consoletype"
+
+    if ShallI "Configure consoletype binary for MLS Mode"; then
+	Log "Configuring consoletype binary for MLS Mode"
+	if ls -Z /sbin/consoletype | grep -q exec_t
+	then
+	    # Create an unprivileged consoletype program
+	    RunWithLog cp /sbin/consoletype /sbin/consoletype.unpriv
+	    RunWithLog chcon -t sbin_t /sbin/consoletype.unpriv
+	    RunWithLog chmod 755 /sbin/consoletype.unpriv
+
+	    # Restrict the privileged _exec_t consoletype to root
+	    # (not done in root-only.conf file since Labeled Security Mode only)
+	    RunWithLog chmod 700 /sbin/consoletype
+
+	    # Make the user init scripts use the unpriv version
+	    for F in /etc/profile.d/lang.*sh
+	    do
+		sed '
+			# Undo old changes if script was run previously
+			s/consoletype\.unpriv/consoletype/g;
+
+			# Use the unprivileged version of the program
+			s/\/sbin\/consoletype/\/sbin\/consoletype.unpriv/g;
+		' \
+		    < "$F" > "$F.new"
+		Replace "$F" removing "$F".new
+	    done
+	else
+	    Log "reconfiguring Consoletype declined"
+	    _FAILURE=1
+	fi
+    fi
+}
+
+
+:  --ConfigureFTP
+#   disable anonymous ftp
+
+ConfigureFTP() {
+
+    Title " Configure FTP service"
+
+    local V=$_VSFTPD_CONF
+
+    [ -f $V ] || {
+	Log "vsftpd not installed?, no configuration changes."
+	return 0
+    }
+
+    if ShallI "enable vsftpd session handling"; then
+	sed '$asession_support=YES' < $V > $V.new
+	Replace $V removing $V.new
+    else
+        Log "reconfiguring vsftpd declined"
+        _FAILURE=1
+    fi
+
+    if ShallI "(optional) Configure anonymous-only FTP access"; then
+
+	sed 's/[#]*anonymous_enable=.*/anonymous_enable=YES/;
+	     s/[#]*local_enable=.*/local_enable=NO/' < $V > $V.new
+	Replace $V removing $V.new
+    else
+	Log "Anonymous-only FTP configuration declined."
+    fi
+}
+
+
+:  --ConfigureSSH
+#   drop in an evaluated configuration for SSHD
+
+ConfigureSSH() {
+
+    Title " Configure OpenSSH"
+
+    [ -f $_SSHD_DEST/$_SSHD_CONFIG ] || {
+        Log "OpenSSH server not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Update sshd configuration"; then
+	Replace $_SSHD_DEST/$_SSHD_CONFIG with $_BASE/$_SSHD_CONFIG
+	if [ -f /etc/sysconfig/$_SSHD_SYSCONFIG ]; then
+	    perl -ne 'print unless /CC.Base.*MLS.*START/../CC.Base.*MLS.*END/' \
+		< /etc/sysconfig/$_SSHD_SYSCONFIG > /etc/sysconfig/$_SSHD_SYSCONFIG.new
+	    sed -i 's/.*SSH_USE_STRONG_RNG.*//' /etc/sysconfig/$_SSHD_SYSCONFIG.new
+	    cat $_BASE/$_SSHD_SYSCONFIG >> /etc/sysconfig/$_SSHD_SYSCONFIG.new
+	    Replace /etc/sysconfig/$_SSHD_SYSCONFIG removing /etc/sysconfig/$_SSHD_SYSCONFIG.new
+	else
+	    Replace /etc/sysconfig/$_SSHD_SYSCONFIG with $_BASE/$_SSHD_SYSCONFIG
+	fi
+    else
+	Log "sshd configuration update declined."
+	_FAILURE=1
+    fi
+
+    # enable sshd by default
+    RunWithLog chkconfig --add sshd
+    RunWithLog chkconfig --level 345 sshd on
+}
+
+: --GenerateSSHHostKeys
+# this function should be run as the first function to have enough time to
+# to get data from /dev/random
+# NOTE - keep the value in SSH_USE_STRONG_RNG consistent with settings in
+#        ConfigureSSH
+
+GenerateSSHHostKeys() {
+    Title "Generating SSH host keys in the background"
+
+    local KEYGEN=/usr/bin/ssh-keygen
+    local RSA1_KEY=/etc/ssh/ssh_host_key
+    local RSA_KEY=/etc/ssh/ssh_host_rsa_key
+    local DSA_KEY=/etc/ssh/ssh_host_dsa_key
+
+    # This logic does not include any error handling - if there is an
+    # error, /etc/init.d/sshd will generate the keys - this code here
+    # is intended to avoid the hassle of generating the keys during first
+    # boot.
+    (
+	export SSH_USE_STRONG_RNG=12
+	# do that only for RHEL5
+	$(cat /etc/redhat-release | grep -q 5) || export SSH_USE_STRONG_RNG=1
+
+	# see do_rsa1_keygen from /etc/init.d/sshd
+	if [ ! -s $RSA1_KEY -a `cat /proc/sys/crypto/fips_enabled` -eq 0 ]; then
+	    Log "Generating SSH1 RSA host key"
+	    rm -f $RSA1_KEY
+	    if test ! -f $RSA1_KEY && $KEYGEN -q -t rsa1 -f $RSA1_KEY -C '' -N '' >&/dev/null; then
+		chmod 600 $RSA1_KEY
+		chmod 644 $RSA1_KEY.pub
+		if [ -x /sbin/restorecon ]; then
+		    /sbin/restorecon $RSA1_KEY.pub
+		fi
+	    fi
+	fi
+	# see do_rsa_keygen from /etc/init.d/sshd
+	if [ ! -s $RSA_KEY ]; then
+	    Log "Generating SSH2 RSA host key"
+	    rm -f $RSA_KEY
+	    if test ! -f $RSA_KEY && $KEYGEN -q -t rsa -f $RSA_KEY -C '' -N '' >&/dev/null; then
+		chmod 600 $RSA_KEY
+		chmod 644 $RSA_KEY.pub
+		if [ -x /sbin/restorecon ]; then
+		    /sbin/restorecon $RSA_KEY.pub
+		fi
+	    fi
+	fi
+	# see do_dsa_keygen from /etc/init.d/sshd
+	if [ ! -s $DSA_KEY ]; then
+	    Log "Generating SSH2 DSA host key"
+	    rm -f $DSA_KEY
+	    if test ! -f $DSA_KEY && $KEYGEN -q -t dsa -f $DSA_KEY -C '' -N '' >&/dev/null; then
+		chmod 600 $DSA_KEY
+		chmod 644 $DSA_KEY.pub
+		if [ -x /sbin/restorecon ]; then
+		    /sbin/restorecon $DSA_KEY.pub
+		fi
+	    fi
+	fi
+    ) &
+}
+
+: --GenerateSSHHostKeysCatch
+# this function should be run as the last function to wait for
+# GenerateSSHHostKeys
+
+GenerateSSHHostKeysCatch() {
+    Title "Waiting for the SSH host key generation to complete"
+    wait
+}
+
+: --ConfigureSSHMLS
+# configure MLS specifics for SSHD
+ConfigureSSHMLS() {
+    Title " Configure OpenSSH for MLS environment"
+    
+    [ -f $_SSHD_DEST/$_SSHD_CONFIG ] || {
+        Log "OpenSSH server not installed?, no configuration changes."
+        return 0
+    }
+
+    [ -f /usr/libexec/openssh/ssh-keycat ] || {
+	Log "ssh-keycat missing for an MLS environment!"
+	return 0
+    }
+
+    if ShallI "Update sshd configuration for MLS mode"; then
+	cp $_SSHD_DEST/$_SSHD_CONFIG $_SSHD_DEST/$_SSHD_CONFIG.new
+	sed -i 's/#\s*\(AuthorizedKeys.*$\)/\1/' $_SSHD_DEST/$_SSHD_CONFIG.new
+	Replace $_SSHD_DEST/$_SSHD_CONFIG removing $_SSHD_DEST/$_SSHD_CONFIG.new
+    else
+	Log "sshd configuration update declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigureXinetd
+ConfigureXinetd() {
+
+    Title " Configure xinetd"
+
+    [ -f $_XINETD_DEST/$_XINETD_CONF ] || {
+        Log "xinetd server not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Update xinetd.conf"; then
+	Replace $_XINETD_DEST/$_XINETD_CONF with $_BASE/$_XINETD_CONF
+
+    else
+	Log "xinetd configuration declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigureXinetdSSH
+ConfigureXinetdSSH() {
+
+    Title " Configure xinetd for MLS sshd"
+
+    [ -d /etc/xinetd.d/ ] || {
+        Log "xinetd server not installed?, no configuration changes."
+        return 0
+    }
+
+    local XINETDFILES=$(ls $_BASE/*.xinetd)
+    local FILE=
+
+    if ShallI "Add/replace files in /etc/xinetd.d/"; then
+        for FILE in $XINETDFILES; do
+	    Replace /etc/xinetd.d/$(basename $FILE .xinetd) with $FILE
+        done
+    else
+        Log "replacement of /etc/xinetd.d/ files declined."
+        _FAILURE=1
+    fi
+}
+
+:  --ConfigureMlsPolicy
+#   SELinux policy for Labeled Security Mode evaluated config
+
+ConfigureMlsPolicy() {
+
+    Title " Configure MLS Mode SELinux policy"
+
+    if ShallI "Define port 222 to be type ssh_port_t"; then
+	RunWithLog semanage port -a -t ssh_port_t -p tcp 222
+    else
+	Log "configuration update declined."
+	 _FAILURE=1
+    fi
+
+     # The following configuration is moved to guidance as it is supposed
+     # to only demonstrate the audit configuration in SELinux
+    if ShallI "Configure MLS Mode SELinux policy"; then
+    	local PDIR=/usr/share/selinux/devel
+
+	Log "Compiling and installing policy"
+        RunWithLog cp $_BASE/$_CC_MLS_POLICY $PDIR
+	( 
+		local PP=$(basename $_CC_MLS_POLICY .te).pp
+		cd $PDIR
+		RunWithLog make $PP
+		RunWithLog semodule -i $PP
+	)
+    else
+	Log "configuration update declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigureRbacSelfTestPolicy
+#   SELinux policy for Labeled Security Mode evaluated config
+
+ConfigureRbacSelfTestPolicy() {
+
+    Title " Configure rbac-self-test SELinux policy"
+
+    if ShallI "Configure rbac-self-test SELinux policy"; then
+	local PDIR=/usr/share/selinux/devel/$_RBACSELFTEST_POLICY_DIR
+
+	Log "Compiling and installing policy"
+	mkdir -p $PDIR
+        RunWithLog cp $_BASE/$_RBACSELFTEST_POLICY_DIR/* $PDIR
+	(
+		local PP=$(basename $_RBACSELFTEST_POLICY .te).pp
+		cd $PDIR
+		RunWithLog make $PP
+		RunWithLog semodule -i $PP
+		RunWithLog restorecon /usr/sbin/rbac-self-test* /etc/security/rbac-self-test.conf
+	)
+    else
+	Log "configuration update declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigurePolyinstantiation
+#   configure pam_namespace
+ConfigurePolyinstantiation() {
+
+    Title " Configure polyinstantiation"
+
+    if ShallI "Update polyinstantiation (pam_namespace) configuration"; then
+	# leave /dev/shm directory unchanged
+        local DIRS=$(
+		awk '/^[^#]/ {print $2}' $_BASE/$_NAMESPACE_CONF | grep -v "/dev/shm" 
+	)
+        Log "Creating base dirs: $DIRS"
+	RunWithLog mkdir -p -m 0 $DIRS
+
+	# FIXME: using tmp_t for polyparent directories so that daemons can access it
+	local D
+	local label
+	for D in $DIRS; do
+		$(echo $D | grep -q "tmp") && {
+		    RunWithLog semanage fcontext -a -e /tmp $( echo "$D" | sed '
+			s/\/$//;
+			s/\([.*?]\)/\\\1/;
+		    ')
+		}
+		$(echo $D | grep -q "home") && {
+		    RunWithLog semanage fcontext -a -e /home $D
+		}
+	done
+
+	# the (new) tmp structure maintains all tmp directories inside
+	# /tmp-parent (see ConfigureTmp) - label it appropriately
+	[ -d "/tmp-parent" ] && RunWithLog semanage fcontext -a -e /tmp /tmp-parent
+	
+	RunWithLog restorecon $DIRS
+
+	RunWithLog restorecon /etc/security/namespace.init
+
+	Replace /etc/security/$_NAMESPACE_CONF with $_BASE/$_NAMESPACE_CONF
+
+	#do not mount /dev/shm due to polyinstantiation
+	cat /etc/fstab | sed 's/\(^.*\/dev\/shm.*$\)/# polyinstantiation takes care of partition\n#\1/' > /etc/fstab.new
+	Replace /etc/fstab removing /etc/fstab.new
+
+    else
+	Log "configuration update declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigureScreen
+ConfigureScreen() {
+
+    Title " Configure screen"
+
+    [ -f $_SCREENRC_DEST/screenrc ] || {
+        Log "screen not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Update screenrc"; then
+        perl -ne 'print unless /CC.Base.*MLS.*START/../CC.Base.*MLS.*END/' \
+		< $_SCREENRC_DEST/screenrc > $_SCREENRC_DEST/screenrc.new
+	cat $_BASE/$_SCREENRC >> $_SCREENRC_DEST/screenrc.new
+	Replace $_SCREENRC_DEST/screenrc removing $_SCREENRC_DEST/screenrc.new
+
+	# ensure that the scroll-back buffer is not enabled
+	# TODO: move it to common-pre.cfg "--append" lines
+	uname -m | grep -q "x86" &&
+	{
+	    local GRUBCONF="/boot/grub/grub.conf"
+	    [ -f $GRUBCONF ] || GRUBCONF="/boot/efi/EFI/redhat/grub.conf"
+	    cp $GRUBCONF $GRUBCONF.new
+	    sed -i '/kernel/s/\(.*\)/\1 no-scroll fbcon=scrollback:0/' $GRUBCONF.new
+	    Replace $GRUBCONF removing $GRUBCONF.new
+	}
+	uname -m | grep -q "ppc" && {
+	    local YABOOTCONF="/boot/etc/yaboot.conf"
+	    cp $YABOOTCONF $YABOOTCONF.new
+	    sed -i 's/\(.*append\s*=.*\)"/\1 no-scroll fbcon=scrollback:0"/' $YABOOTCONF.new
+	    Replace $YABOOTCONF removing $YABOOTCONF.new	    
+	}
+	uname -m | grep -q "s390" && {
+	    local ZIPLCONF="/etc/zipl.conf"
+	    cp $ZIPLCONF $ZIPLCONF.new
+	    sed -i 's/\(.*parameters\s*=.*\)"/\1 no-scroll fbcon=scrollback:0"/' $ZIPLCONF.new
+	    Replace $ZIPLCONF removing $ZIPLCONF.new
+	    zipl
+	}
+    else
+	Log "screen configuration declined."
+	_FAILURE=1
+    fi
+}
+
+:  --ConfigureLibvirt
+ConfigureLibvirt() {
+
+    Title " Configure libvirtd"
+
+    [ -f $_LIBVIRT_DEST/$_LIBVIRT_CONF ] || {
+        Log "libvirt server not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Update libvirtd configuration"; then
+	Replace $_LIBVIRT_DEST/$_LIBVIRT_CONF with $_BASE/$_LIBVIRT_CONF
+    else
+	Log "libvirtd configuration declined."
+	_FAILURE=1
+    fi
+
+    RunWithLog chkconfig --add libvirtd
+    RunWithLog chkconfig --level 345 libvirtd on
+}
+
+:  --ConfigureTmp
+#We now have:
+#
+#/tmp-parent (mounted in fstab)
+#      tmp-inst (0000 mode) - to be created by polyinstantiation function
+#      tmp      (1777 mode)
+#
+#Bind mount from /tmp-parent/tmp to /tmp (in fstab).
+#Bind mount from /tmp-parent/tmp to /var/tmp (in fstab).
+#/tmp-parent/tmp-inst is now the polyinstantiated parent dir for /tmp.
+#/tmp-parent/tmp-inst is now the polyinstantiated parent dir for /var/tmp.
+ConfigureTmp() {
+
+    Title " Move tmp directory to /tmp-parent"
+
+    if ShallI "Update /etc/fstab to move /tmp to /tmp-parent"; then
+	local FSTAB="/etc/fstab"
+	TEST="`grep '[[:space:]]\/tmp[[:space:]]' ${FSTAB} `"
+	#only perform the modification if there is no /tmp-inst already present
+        if [ "$?" = "0" ]; then
+	    cp -f ${FSTAB} ${FSTAB}.new
+	    # change mount point of /tmp to /tmp-parent
+            sed -i "s/\([[:space:]]\)\/tmp/\1\/tmp-parent/" ${FSTAB}.new
+	    # change bind mount for /var/tmp
+	    sed -i "s/\/tmp\([[:space:]]\)/\/tmp-parent\/tmp\1/" ${FSTAB}.new
+	    # bind mount /tmp-parent/tmp to /tmp
+	    echo -e "/tmp-parent/tmp\t/tmp\text4\tbind,nodev,noexec,nosuid,user_xattr,acl\t0 0" >> ${FSTAB}.new
+	    mkdir /tmp-parent
+	    # bind mount the directory at /tmp ot the new mount point to ensure
+	    # that all subsequent calls on /tmp-parent happen in the right
+	    # directory -- this operation is intended to be temporary and
+	    # only applicable to the installation phase
+	    mount -t none -o bind /tmp /tmp-parent
+	    chmod 755 /tmp-parent
+	    mkdir /tmp-parent/tmp
+	    chmod 1777 /tmp-parent/tmp
+	    # polyinstantiation setup takes care of the polyparent dirs
+	    #mkdir /tmp/tmp-inst
+	    #chmod 000 /tmp/tmp-inst
+	    RunWithLog restorecon -r /tmp
+	    Replace ${FSTAB} removing ${FSTAB}.new
+        fi
+    else
+	Log "Mounting of tmp under /tmp-parent declined."
+	_FAILURE=1
+    fi
+
+}
+
+:  --RelabelDirs
+RelabelDirs() {
+
+    Title " Fixing up directory labels"
+    RunWithLog restorecon -r /etc/selinux/mls
+    RunWithLog restorecon -r /root
+}
+
+: --Die
+#  log an error and exit
+
+Die() {
+    Warn "Fatal: $@"
+    TickOff
+    exit 1
+}
+
+
+:  --Warn
+#  write args to stderr, and log them
+
+Warn() {
+    echo "$@" 1>&2
+    Log "$@" >/dev/null
+}
+
+: --HardenPamConfig
+#  replace sensitive PAM config files
+
+HardenPamConfig() {
+    # TODO - these should be dropped into place by the RPM?
+
+    Title " Configure Pluggable Authentication Modules (PAM)"
+
+    local FILE=
+
+    # Ensure that the opasswd file exists, otherwise password changing breaks
+    # not needed for RHEL5, but doesn't hurt
+    RunWithLog touch /etc/security/opasswd
+    RunWithLog chmod 600 /etc/security/opasswd
+    RunWithLog restorecon /etc/security/opasswd
+ 
+    if ShallI "Replace files in /etc/pam.d/"; then
+        # First grab the generic ones.
+        local PAMFILES=$(ls $_BASE/*.pam)
+        for FILE in $PAMFILES; do
+	    Replace /etc/pam.d/$(basename $FILE .pam) with $FILE
+        done
+	# Next grab the protection profile-specific ones
+        local PAMFILES=$(ls $_BASE/*.pam.$_PROFILE)
+        for FILE in $PAMFILES; do
+	    Replace /etc/pam.d/$(basename $FILE .pam.$_PROFILE) with $FILE
+        done
+    else
+        Log "replacement of /etc/pam.d/ files declined."
+        _FAILURE=1
+    fi
+
+    if ShallI "Update $_LOGIN_DEFS_DEST/$_LOGIN_DEFS"; then
+	Replace $_LOGIN_DEFS_DEST/$_LOGIN_DEFS with $_BASE/$_LOGIN_DEFS
+    else
+	Log "replacement of $_LOGIN_DEFS declined."
+	_FAILURE=1
+    fi
+
+    # the following is only for RHEL6
+    $(cat /etc/redhat-release | grep -q 5) && return
+
+    if ShallI "Update password strength and locking configuration"; then
+	cat /etc/pam.d/system-auth-ac | \
+	    sed 's/pam_cracklib\.so.*/pam_cracklib\.so minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1 difok=3/' \
+	    > /etc/pam.d/system-auth-ac.new
+	# this call pushes the update into password-auth
+	RunWithLog authconfig --updateall
+	# the following changes are undone with any authconfig calls!
+	local ITERATOR= 
+	for ITERATOR in /etc/pam.d/system-auth-ac /etc/pam.d/password-auth-ac; do
+	    cp  $ITERATOR $ITERATOR.new
+	    sed -i 's/auth\s*sufficient\s*pam_unix\.so.*/auth\t\[success=1 default=bad\]\tpam_unix\.so nullok try_first_pass\nauth\t[default=die]\tpam_faillock\.so authfail unlock_time=604800 root_unlock_time=900\nauth\trequired\tpam_faillock\.so authsucc unlock_time=604800 root_unlock_time=900/' $ITERATOR.new
+	    sed -i 's/auth\s*requisite\s*pam_succeed_if\.so.*//' $ITERATOR.new
+	    sed -i 's/auth\s*required\s*pam_deny\.so.*//' $ITERATOR.new
+	    Replace $ITERATOR removing $ITERATOR.new
+	done
+    else
+	Log "Update of pam_cracklib configuration declined."
+	_FAILURE=1
+    fi
+
+    if ShallI "Display last login information during login (required by DISA STIG, NISPOM, FISMA"; then
+	local ITERATOR=
+	for ITERATOR in /etc/pam.d/sshd /etc/pam.d/login /etc/pam.d/remote; do
+	    cp  $ITERATOR $ITERATOR.new
+	    echo -e "session\trequired\tpam_lastlog.so noupdate showfailed" >> $ITERATOR.new
+	    Replace $ITERATOR removing $ITERATOR.new
+	done
+	touch /etc/hushlogins
+    else
+	Log "Update of pam_lastlog configuration declined."
+	_FAILURE=1
+    fi
+}
+
+
+: --HardenPermissions
+#  set permissions to those required for evaluated configuration
+
+HardenPermissions() {
+
+    Title " Configure SUID/SGID executable permissions"
+
+    local P=$(StripComments $_PERMSFILE)
+    local ROOT_ONLY=$(StripComments $_ROOT_ONLY_FILE)
+    local OUTPUT=
+
+    Log "Restricted executables: " $ROOT_ONLY
+    if ShallI "Restrict these executables to root"; then
+        chmod 500 $ROOT_ONLY
+    else
+	Log "chmod declined."
+	_FAILURE=1
+    fi
+
+    IEcho "All but the following files will have their setuid/setgid bits removed:
+"
+    IEcho $P | tr '\040' '\012'
+    IEcho
+
+    if ShallI "Update setuid/setgid bits and permissions";then
+	
+	set xx $P; shift
+	
+	P=
+
+	while [ "$1" ]; do P="$P ! -path $1"; shift;done
+	
+	local Chmod="chmod"
+	[ "$_PRINT_ONLY" ] && {
+		Chmod="echo +chmod"
+	}
+
+	TickOn
+
+	OUTPUT=$(find / \
+	    -not \( -fstype ext2 -o -fstype ext3 -o -fstype ext4 -o \
+	    -fstype rootfs \) -prune \
+	    -o -type f \( -perm +4000 -o -perm +2000 \) \
+	    $P -print0 \
+	    | xargs -0r $Chmod -v -s 2>&1)
+	Log "$OUTPUT"
+
+	TickOff
+
+	Log "Restricting /bin/su to wheel group"
+        RunWithLog chgrp wheel /bin/su
+        RunWithLog chmod 4710  /bin/su
+    else
+	Log "setuid/setgid bit removal declined."
+	_FAILURE=1
+    fi
+
+    if ShallI "Harden permissions required by DISA STIG"; then
+	RunWithLog chmod 600 /etc/crontab
+	RunWithLog chmod 600 /etc/xinetd.conf
+	RunWithLog chmod 600 /etc/xinetd.d/*
+	RunWithLog chmod 700 /etc/xinetd.d
+    else
+	Log "Harden permissions required by DISA STIG declined."
+	_FAILURE=1
+    fi
+}
+
+: --HardenFSTab
+HardenFSTab() {
+
+    Title " Harden mount point configurations"
+    if ShallI "Harden the mount point configuration"; then
+	local FSTAB=/etc/fstab.new
+	perl -ne 'print unless /CC.Base.*MLS.*START/../CC.Base.*MLS.*END/' \
+                < /etc/fstab >> $FSTAB
+	cat $_BASE/$_FSTAB_ADD >> $FSTAB
+	# nodev, noexec, and nosuid on /boot
+	TEST="`grep '[[:space:]]\/boot[[:space:]]' ${FSTAB} | grep -c 'noexec'`"
+	if [ "$TEST" = "0" ]; then
+	    MNT_OPTS=$(grep "[[:space:]]\/boot[[:space:]]" ${FSTAB} | awk '{print $4}')
+	    sed -i "s/\([[:space:]]\/boot[[:space:]].*${MNT_OPTS}\)/\1,nodev,noexec,nosuid/" ${FSTAB}
+	fi
+	# nodev on /home
+	TEST="`grep '[[:space:]]\/home[[:space:]]' ${FSTAB} | grep -c 'nodev'`"
+	if [ "$TEST" = "0" ]; then
+	    MNT_OPTS=$(grep "[[:space:]]\/home[[:space:]]" ${FSTAB} | awk '{print $4}')
+	    sed -i "s/\([[:space:]]\/home[[:space:]].*${MNT_OPTS}\)/\1,nodev/" ${FSTAB}
+	fi
+	# nodev, noexec, and nosuid on /var/log/audit
+	TEST="`grep '[[:space:]]\/var\/log\/audit[[:space:]]' ${FSTAB} | grep -c 'noexec'`"
+	if [ "$TEST" = "0" ]; then
+	    MNT_OPTS=$(grep "[[:space:]]\/var\/log\/audit[[:space:]]" ${FSTAB} | awk '{print $4}')
+	    sed -i "s/\([[:space:]]\/var\/log\/audit[[:space:]].*${MNT_OPTS}\)/\1,nodev,noexec,nosuid/" ${FSTAB}
+	fi
+	# nodev, noexec, and nosuid on /var/log
+	TEST="`grep '[[:space:]]\/var\/log[[:space:]]' ${FSTAB} | grep -c 'noexec'`"
+	if [ "$TEST" = "0" ]; then
+	    MNT_OPTS=$(grep "[[:space:]]\/var\/log[[:space:]]" ${FSTAB} | awk '{print $4}')
+	    sed -i "s/\([[:space:]]\/var\/log[[:space:]].*${MNT_OPTS}\)/\1,nodev,noexec,nosuid/" ${FSTAB}
+fi
+	# nodev, noexec, and nosuid on /tmp
+	# CCE-14412-1, CCE-14940-1, CCE-14927-3 (Rows 19 - 21)
+	TEST="`grep '[[:space:]]\/tmp[[:space:]]' ${FSTAB} | grep -c 'noexec'`"
+	if [ "$TEST" = "0" ]; then
+	    MNT_OPTS=$(grep "[[:space:]]\/tmp[[:space:]]" ${FSTAB} | awk '{print $4}')
+	    sed -i "s/\([[:space:]]\/tmp[[:space:]].*${MNT_OPTS}\)/\1,nodev,noexec,nosuid/" ${FSTAB}
+	fi
+	# nodev, noexec, and nosuid on /dev/shm
+	# CCE-15007-8, CCE-14306-5, CCE-14703-3 (Rows 22 - 24)
+	TEST="`grep '[[:space:]]\/dev\/shm[[:space:]]' ${FSTAB} | grep -c 'noexec'`"
+	if [ "$TEST" = "0" ]; then
+	    MNT_OPTS=$(grep "[[:space:]]\/dev\/shm[[:space:]]" ${FSTAB} | awk '{print $4}')
+	    sed -i "s/\([[:space:]]\/dev\/shm[[:space:]].*${MNT_OPTS}\)/\1,nodev,noexec,nosuid/" ${FSTAB}
+	fi
+
+        Replace /etc/fstab removing $FSTAB
+    else
+	Log "Harden mount points declined."
+	_FAILURE=1
+    fi
+}
+
+: --InstallServices
+InstallServices() {
+
+    # Starting with RHEL6 we allow udev as it is more widely used
+    $(cat /etc/redhat-release | grep -q 5) || return
+	
+    Title " Add CC Base / MLS Mode service"
+
+    if ShallI "Add CC Base / MLS Mode boot service"; then
+	Replace /etc/init.d/$_SVC_CC with $_BASE/$_SVC_CC.service
+	RunWithLog chmod +x /etc/init.d/$_SVC_CC
+	RunWithLog chkconfig --level 3 $_SVC_CC on
+    else
+	Log "Addition of CC Base / MLS Mode boot service declined."
+	_FAILURE=1
+    fi
+}
+
+: --HardenServiceLinks
+#  clear out runlevel links for all services
+#  link in only those called out in _SERVICES
+
+HardenServiceLinks() {
+
+    Title " Configure runlevel links for all services"
+
+    local WERE_ENABLED=$(cd $_SERVICEDIR; ls S* 2>/dev/null | sed 's/...//' | sort)
+
+    # runlevel link removal:
+    if ShallI "Remove all runlevel links from $_SERVICEDIR"; then
+	(
+	    cd $_SERVICEDIR;
+	    RunWithLog rm -f * nosuchfileordirectory_dummy
+	)
+	Log "all runlevel symlinks removed."
+    else
+	Log "Removal of runlevel symlinks declined."
+	_FAILURE=1
+    fi
+
+    local SERVICE= 
+    local REQUIRED=$( StripComments $_SVC_REQ | sort)
+    local PERMITTED=$(StripComments $_SVC_OPT | sort)
+    local S= FOUND= COUNT=0
+    
+    LogBlock "required services: $REQUIRED"
+    
+    if ShallI "Make links in $_SERVICEDIR for all required services."; then
+	for SERVICE in $REQUIRED; do
+	    [ -f $_SERVICEBASE/$SERVICE ] || {
+		Log "Required Service script $SERVICE not in $_SERVICEBASE"
+		continue
+	    }
+	    RunWithLog $_SERVICE_ENABLE $SERVICE $_SERVICE_CMD || {
+		Log "$_SERVICE_ENABLE failed to enable $SERVICE"
+		_FAILURE=1
+		continue
+	    }
+	    COUNT=$((COUNT + 1))
+	done
+    else
+	Log "symlink creation for required services declined"
+	_FAILURE=1
+    fi
+
+    LogBlock "previously active services: $WERE_ENABLED"
+    LogBlock "permitted additional services: $PERMITTED"
+
+    if ShallI "Reactivate those permitted services you had been running"; then
+	for SERVICE in $PERMITTED; do
+
+	    FOUND=
+	    for S in $WERE_ENABLED; do
+		[ $S = $SERVICE ] && {
+		    FOUND=1
+		    break
+		}
+	    done
+	    [ "$FOUND" ] && {
+		RunWithLog $_SERVICE_ENABLE $SERVICE $_SERVICE_CMD || {
+		    Log "$_SERVICE_ENABLE failed to enable $SERVICE"
+		    continue
+		}
+		COUNT=$((COUNT + 1))
+	    }
+	done
+    fi
+    Log "$COUNT new runlevel symlinks created."
+
+    if ShallI "(optional) Disable interactive boot"; then
+        local InitConf=/etc/sysconfig/init
+	sed 's/PROMPT=yes/PROMPT=no/' < $InitConf > $InitConf.new && \
+	Replace $InitConf removing $InitConf.new
+        Log "Interactive boot disabled in $InitConf."
+    fi
+}
+
+: --HardenQemu
+HardenQemu() {
+
+    [ -f /etc/libvirt/$_QEMU_CONF ] || {
+        Log "KVM not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Update QEMU configuration"; then
+	Replace /etc/libvirt/$_QEMU_CONF with $_BASE/$_QEMU_CONF
+
+	# the following is only applicable on Intel CPUs
+	# XXX disable this code as IOMMU has hardware design weaknesses
+#        (cat /proc/cpuinfo | grep "model name" | grep -q "Intel") && {
+#	    # ensure that the IOMMU is enabled by default
+#	    local GRUBCONF="/boot/grub/grub.conf"
+#	    [ -f $GRUBCONF ] || GRUBCONF="/boot/efi/EFI/redhat/grub.conf"
+#	    cp $GRUBCONF $GRUBCONF.new
+#	    sed -i '/kernel/s/\(.*\)/\1 intel_iommu=on/' $GRUBCONF.new
+#	    Replace $GRUBCONF removing $GRUBCONF.new
+#	}
+
+    else
+        Log "Update of qemu.conf declined."
+        _FAILURE=1
+    fi
+}
+
+: --SetupSysctl
+SetupSysctl() {
+    if ShallI "Update sysctl.conf"; then
+	perl -ne 'print unless /CC.Base.*MLS.*START/../CC.Base.*MLS.*END/' \
+		< /etc/sysctl.conf > /etc/sysctl.conf.new
+	cat $_BASE/$_SYSCTL_ADD >> /etc/sysctl.conf.new
+    	Replace /etc/sysctl.conf removing /etc/sysctl.conf.new
+    else
+	Log "Update of sysctl.conf declined."
+	_FAILURE=1
+    fi
+}
+
+: --SetupModuleBlacklist
+SetupModuleBlacklist() {
+    if ShallI "Add forbidden modules to blacklist to prevent autoload"; then
+	local FILE="blacklist"
+	# on RHEL6, we have blacklist.conf
+	$(cat /etc/redhat-release | grep -q 5) || FILE="blacklist.conf"
+
+	perl -ne 'print unless /CC.Base.*MLS.*START/../CC.Base.*MLS.*END/' \
+    		< /etc/modprobe.d/$FILE > /etc/modprobe.d/$FILE.new
+	cat $_BASE/$_MODULE_BLACKLIST >> /etc/modprobe.d/$FILE.new
+	Replace /etc/modprobe.d/$FILE removing /etc/modprobe.d/$FILE.new
+    else
+	Log "Module blacklist declined."
+	_FAILURE=1
+    fi
+}
+
+: --DisableUsbfs
+DisableUsbfs() {
+    if ShallI "Disable usbfs"; then
+	perl -pe 's/^/:/ if /^\s*mount.*usb/' < /etc/rc.d/rc.sysinit > /etc/rc.d/rc.sysinit.new
+	Replace /etc/rc.d/rc.sysinit with /etc/rc.d/rc.sysinit.new
+    fi
+}
+
+: --SetupProfile
+SetupProfile() {
+
+    [ -f $_SCREENRC_DEST/screenrc ] || {
+        Log "screen not installed?, no configuration changes."
+        return 0
+    }
+
+    if ShallI "Add screen saver"; then
+	perl -ne 'print unless /CC.Base.*MLS.*START/../CC.Base.*MLS.*END/' \
+		< /etc/profile >> /etc/profile.new
+	cat $_BASE/$_PROFILE_INIT_ADD > /etc/profile.new2
+	cat /etc/profile.new >> /etc/profile.new2
+	mv -f /etc/profile.new2 /etc/profile.new
+	cat $_BASE/$_PROFILE_ADD >> /etc/profile.new
+	Replace /etc/profile removing /etc/profile.new
+	perl -ne 'print unless /CC.Base.*MLS.*START/../CC.Base.*MLS.*END/' \
+		< /etc/csh.login >> /etc/csh.login.new
+	cat $_BASE/$_CSH_LOGIN_INIT_ADD > /etc/csh.login.new2
+	cat /etc/csh.login.new >> /etc/csh.login.new2
+	mv -f /etc/csh.login.new2 /etc/csh.login.new
+	cat $_BASE/$_CSH_LOGIN_ADD >> /etc/csh.login.new
+	Replace /etc/csh.login removing /etc/csh.login.new
+    else
+	Log "Update of /etc/profile declined."
+	_FAILURE=1
+    fi
+}
+
+: --SetupKVM
+SetupKVM() {
+    # do that only for RHEL5
+    $(cat /etc/redhat-release | grep -q 5) || return
+
+    if ShallI "Change permission on /dev/kvm"; then
+	cp /etc/udev/rules.d/65-kvm.rules /etc/udev/rules.d/65-kvm.rules.new
+	sed -i '/KERNEL=="kvm"/s/GROUP="kvm"/GROUP="qemu"/' /etc/udev/rules.d/65-kvm.rules.new
+	Replace /etc/udev/rules.d/65-kvm.rules removing /etc/udev/rules.d/65-kvm.rules.new
+    else
+	Log "Update of permissions on /dev/kvm declined."
+	_FAILURE=1
+    fi
+}
+
+: --HardenBoot
+HardenBoot() {
+    # do that only for RHEL6
+    $(cat /etc/redhat-release | grep -q 5) && return
+
+    if ShallI "Harden the interactive boot procedure"; then
+	cp /etc/sysconfig/init /etc/sysconfig/init.new
+	sed -i "/PROMPT/s/yes/no/" /etc/sysconfig/init.new
+	sed -i "/SINGLE/s/sushell/sulogin/" /etc/sysconfig/init.new
+	Replace /etc/sysconfig/init removing /etc/sysconfig/init.new
+	cp /etc/sysconfig/network /etc/sysconfig/network.new
+	echo "NOZEROCONF=yes" >> /etc/sysconfig/network.new
+	Replace /etc/sysconfig/network removing /etc/sysconfig/network.new
+    else
+	Log "Harden of the interactive boot procedure declined."
+	_FAILURE=1
+    fi
+}
+
+: --HardenRoot
+HardenRoot() {
+    if ShallI "Harden the root user ID"; then
+	usermod -G "" root
+    else
+	Log "Harden of the root user ID declined."
+	_FAILURE=1
+    fi
+}
+
+: --HardenLibgcrypt
+HardenLibgcrypt() {
+    # do that only for RHEL6
+    $(cat /etc/redhat-release | grep -q 5) && return
+
+    if ShallI "Harden libgcrypt"; then
+	[ -e /etc/gcrypt/rngseed ] && rm -f /etc/gcrypt/rngseed
+	[ ! -d /etc/gcrypt ] && {
+	    mkdir /etc/gcrypt
+	    chmod 755 /etc/gcrypt
+	}
+	ln -s /dev/random /etc/gcrypt/rngseed
+    else
+	Log "Harden of libgcrypt declined."
+	_FAILURE=1
+    fi
+}
+
+: --Log
+#  log to descriptor 88 if available
+#   if it's not, log to stdout
+
+Log() {
+    if [ -e /proc/self/fd/88 ]; then
+	echo "$@" >&88
+	[ "$_VERBOSE" ] && echo "$@"
+    else
+	echo "$@"
+    fi
+}
+
+Title() {
+    [ "$_VERBOSE" ] && {
+	echo
+	echo "###" "$@"
+	echo
+    }
+    Log "###" "$@" >/dev/null
+}
+
+
+: --RunWithLog
+# Run command, appending stdout and stderr to the log file
+RunWithLog() {
+    if [ "$_PRINT_ONLY" ]
+    then
+        [ -e /proc/self/fd/88 ] && echo "-$*" >&88
+        [ "$_VERBOSE" ] && echo "-$*"
+    else
+        local RET
+        local LINE
+
+        if [ -e /proc/self/fd/88 ]; then
+            echo "+$*" >&88
+            [ "$_VERBOSE" ] && echo "+$*"
+
+            # can't use 'tee', it doesn't append in the right place causing lost output.
+            # Do it manually instead.
+            "$@" 2>&1 | while IFS='' read LINE
+            do
+                echo "$LINE"
+                echo "$LINE" >&88
+            done
+            
+            RET=${PIPESTATUS[0]} # bash-specific, but no other easy way to capture return code
+
+        else
+            "$@"
+            RET=$?
+        fi
+        return $RET
+    fi
+}
+
+:  --FmtEcho
+# Print arguments as indented paragraph, skipping blank lines
+
+FmtEcho() {
+    echo "$@" | sed '/^ *$/d;' | fmt | sed '2,$s/^/    /' | fmt
+}
+
+:  --LogBlock
+# Print arguments to stdout as FmtEcho if interactive, but send to 
+# log file as a single line
+LogBlock() {
+    [ "$_VERBOSE" ] && FmtEcho "$@"
+    Log $(echo "$@") >/dev/null
+}
+
+
+: --Main
+#  the top of the tops
+#
+
+Main() {
+    local ARGS=$*
+    
+    [ $(/usr/bin/id -nu) != root ] && {
+	Die "This script must be run as root."
+    }
+
+    # open the log file
+    # _PRINT_ONLY isn't set yet, necessary to avoid overwriting the log file
+    NewLog " --- $(date) script running: $0 args $ARGS"
+
+    # run checks to make sure all of our data files are here
+    local K
+
+    for K in $_BASE ; do
+	[ -d $K ] || Die "Required directory missing: $K"
+    done
+
+    for K in $_ALLFILES; do
+	[ -f $K ] || Die "Required file missing: $K"
+    done
+
+    # run sanity checks
+    [ ! -f /proc/1/cmdline ] && {
+	Die "Please mount /proc"
+    }
+    mount | grep "type nfs" && {
+	Warn "Warning: you have NFS filesystems mounted, which is only allowed with restrictions. See $_ECG section \"Mounting filesystems\"."
+    }
+    mount | grep "type smb" && {
+	Warn "Warning: you have SAMBA filesystems mounted, which is only allowed with restrictions. See $_ECG section \"Mounting filesystems\"."
+    }
+    mount | grep "type vfat" | grep -v /boot/efi && {
+	Die "Please unmount all VFAT filesystems.  See $_ECG."
+    }
+    mount | grep "type ext2" && {
+	Die "Please remount your EXT2 filesystems as EXT3 or EXT4.  See $_ECG."
+    }
+    mount | grep "type autofs" && {
+	Die "Please unmount all AUTOFS filesystems.  See $_ECG."
+    }
+    # !@ there are probably more filesystems we should gripe about
+
+    [ $(rpm -q kernel kernel-smp | grep -v 'not inst' | wc -l) -gt 1 ] && {
+    	Warn "Warning: you have more than one kernel package installed, which may cause problems. You should uninstall unused kernels before running the script, see $_ECG."
+    }
+
+    # !@ check for other bootable systems in the GRUB config?
+
+    # is dhclient running?
+    # XXX disabled as on RHEL6 dhclient is still executing
+    #     Besides, I do not see the necessity to have that check
+    #ps ax | grep -v grep | grep -q dhclient && {
+	#Die "Please hard-configure your network (no DHCP)"
+    #}
+
+    grep -q 'wheel:.*:.*:.' /etc/group || {
+	Die "No trusted users. You won't be able to use 'su'. See $_ECG."
+    }
+
+    # !@ Perhaps we should disable USB and FireWire?  Modems and ISDN?
+
+    # Are we running on a terminal? If yes, be more verbose.
+    if [ -t 0 ]
+    then
+	_INTERACTIVE=yes
+    else
+	_INTERACTIVE=
+    fi
+
+    _VERBOSE=yes
+
+    # parse the command line
+    while [ "$1" ]; do
+	case $1 in
+	    -h|--help)
+		Usage
+		exit 0
+		;;
+	    -i|--interactive)
+		_INTERACTIVE=yes
+		shift
+		;;
+	    -a|--automated)
+		_INTERACTIVE=
+		shift
+		;;
+	    -n|--no-action)
+		_PRINT_ONLY=yes
+		shift
+		;;
+	    -v|--verbose)
+		_VERBOSE=yes
+		shift
+		;;
+	    -q|--quiet)
+		_VERBOSE=
+		shift
+		;;
+	    -b|--base)
+	    	_PROFILE=base
+		shift
+		;;
+	    -m|--mls)
+	    	_PROFILE=mls
+		shift
+		;;
+	    *)  Usage
+		exit 1
+		;;
+	esac
+    done
+
+    
+    [ "$_INTERACTIVE" ] && {
+	echo "
+You have chosen to run the reconfiguration in interactive mode.
+The evaluated configuration requires that *all* the steps are
+done. If you want to do this automatically, stop and re-run the
+script in noninteractive mode ('-a' option).
+
+The reconfiguration involves removing packages and modifying the
+system configuration, which may result in a system that is
+not useful to you. For example, the X11 desktop is removed.
+
+Please read the documentation before proceeding.
+
+"
+	AskYN "Continue?" "n" || {
+	    Die "Reconfiguration declined.  Your system was not modified."
+	}
+
+	[ "$_PROFILE" = "" ] && {
+		if ShallI "Configure the Base Mode"; then
+		    _PROFILE=base
+		else
+		    if ShallI "Configure for the MLS Mode"; then
+			    _PROFILE=mls
+		    fi
+		fi
+	}
+    }
+
+    [ "$_PROFILE" = "" ] && {
+	echo >&1 "Error: Must specify either Base or MLS Mode."
+	Usage
+	exit 1
+    }
+
+    # On RHEL5x we have ext3
+    local fstype="ext4"
+    $(cat /etc/redhat-release | grep -q 5) && fstype="ext3"
+    mount | grep ' / ' | grep -q "type $fstype.*,acl" || {
+	UpdateFSTAB || {
+	    Die "root filesystem must be $fstype with ACL support on. See $_ECG."
+	}
+    }
+
+    [ $_PROFILE == "mls" ] && {
+	    ConfigureMlsPolicy
+	    # rbac-self-test not needed any more
+	    #ConfigureRbacSelfTestPolicy
+    }
+    GenerateSSHHostKeys
+    InstallServices
+    HardenServiceLinks
+    HardenPamConfig
+    HardenQemu
+    HardenFSTab
+    HardenBoot
+    HardenRoot
+    HardenLibgcrypt
+    SetupSysctl
+    SetupModuleBlacklist
+    ConfigureShellCC
+    SecureTTY
+    ConfigureSSH
+    ConfigureXinetd
+    ConfigureFTP
+    ConfigureAudit
+    ConfigurePostfix
+    ConfigureScreen
+    ConfigureLibvirt
+    SetupProfile
+    SetupKVM
+    [ $_PROFILE == "mls" ] && {
+	    ConfigureTmp
+    	    SELinuxShellPrompt
+	    ConfigureCups
+	    ConfigurePolyinstantiation
+	    ConfigureCron
+	    ConfigureConsoletype
+	    ConfigureXinetdSSH
+	    ConfigureSSHMLS
+	    RelabelDirs
+    }
+    DisableUsbfs
+    HardenPermissions
+    SetRunLevel 3
+    GenerateSSHHostKeysCatch
+    Reboot
+
+    # if we got here, the reboot was declined
+    CloseLog
+    TickOff
+    Warn "
+Your system is NOT in the evaluated configuration.
+Please check $_LOGFILE for more details."
+    return $_FAILURE
+}
+
+: --NewLog
+#  log an error message, opening the log if necessary
+#   used to initiate logging or to log before we're sure
+#   logging has been enabled
+
+NewLog() {
+
+    [ -e /proc/self/fd/88 ] || {
+	# open the logfile
+	Archive $_LOGFILE
+	exec 88> $_LOGFILE	# May 16, Happy Birthday Wladziu!
+    }
+
+    (_VERBOSE=1; Log "$@")
+}
+
+
+
+
+: --Reboot
+#  reboot the system
+
+Reboot() {
+
+    Title "System reboot"
+
+    [ -x /sbin/zipl ] && {
+	ShallI "Run 'zipl' to update the boot loader configuration?" && {
+	    RunWithLog zipl
+	}
+    }
+    
+    [ "$_BOOTFAIL.$_FAILURE" = . ] && {
+	Log "Reconfiguration successful."
+	IEcho
+	Log "It is now necessary to reboot the system."
+	Log "After the reboot, your system configuration will match the evaluated configuration"
+	IEcho
+	if ShallI "Reboot the system"; then
+	    Log "rebooting the system now. Sleeping for 10 seconds..."
+	    CloseLog
+	    RunWithLog sync
+	    RunWithLog sleep 10
+	    
+	    # can't reboot this way if init isn't running,
+	    # this is the case when run from the install %post section.
+	    if ps ax | grep -v grep | grep -v ' /init' | grep -q init; then
+		    RunWithLog shutdown -r now
+		    echo "Waiting..."
+		    RunWithLog sleep 600
+	    else
+	    	    # let anaconda reboot
+	    	    echo "Exiting."
+	    fi
+	    exit 0
+	else
+	    Log "reboot declined.
+Please note that the system must be rebooted for
+the configuration to be complete."
+	    _FAILURE=1
+	fi
+    }
+}
+
+
+: --Replace
+#  drop in an updated version of a file
+
+Replace() {
+
+    local SRC=$3 CMD=$2 DEST=$1
+    local MODE= UG=
+
+    [ -f $DEST ] && {
+	[ "$CMD" = with ] && cmp -s $SRC $DEST && {
+	    Log "$SRC and $DEST are identical. No change."
+	    return 0
+	}
+	Log "Archiving $DEST"
+	MODE=$(stat -L -c '%a'    $DEST)
+	UG=$(  stat -L -c '%U.%G' $DEST)
+	expr $DEST : /etc/init.d >/dev/null || {
+            # don't store backups inside /etc/init.d
+	    Archive $DEST
+	}
+    }
+    RunWithLog cp -p $SRC $DEST
+    [ $MODE/$UG != / ] && {
+	RunWithLog chmod $MODE $DEST
+	RunWithLog chown $UG $DEST
+    }
+    RunWithLog restorecon "$DEST"
+    [ "$CMD" = removing ] && RunWithLog rm -f $SRC
+}
+
+
+: --SecureTTY
+#  make sure there are no pty entries in /etc/securetty
+
+SecureTTY() {
+    grep -q '^pts' /etc/securetty && {
+	Die "root login over network connections is not permitted.
+Please check and correct /etc/securetty"
+    }
+}
+
+    
+: --SetRunLevel
+#  modify inittab for a specified runlevel
+
+SetRunLevel() {
+    local LEVEL=${1:-3}
+    local MODE= UG=
+    local I=/etc/inittab
+    local CURR_LEVEL=$(sed -n 's/^id:\([0-9]*\):.*/\1/p' $I)
+
+    [ ."$LEVEL" = ."$CURR_LEVEL" ] && return
+
+    if ShallI "Change default runlevel to $LEVEL"; then
+	Log "changing default runlevel to $LEVEL"
+
+	sed 's/^id:.:initdefault:/id:'$LEVEL':initdefault:/' < $I > $I.new
+
+	Replace $I removing $I.new
+    else
+	Log "initdefault change to $LEVEL declined."
+	_FAILURE=1
+	_BOOTFAIL=1
+    fi
+}
+
+
+:  --ShallI
+#  allow the user to confirm an action before doing it
+ 
+ShallI() {
+    AskYN "$1?" "y"
+}
+
+: --StripComments
+# strip comments from a file, write result on stdout
+#  filename in $1 or will use stdin
+
+StripComments() {
+    sed 's/#.*//' < $1
+}
+
+
+:  --TickOff
+#   turn off heartbeat
+
+TickOff() {
+    [ "$_TICKPID" ] && {
+	kill -1 $_TICKPID
+	wait $_TICKPID
+	_TICKPID=
+	echo -e " \b"
+    }
+}
+
+:  --TickOn
+#  heartbeat - draw spinning ticker on the screen
+
+TickOn() {
+    [ "$_TICKPID" ] && return
+    [ "$_INTERACTIVE" ] || return
+
+    (
+	trap 'exit 0' 1 2 15
+
+	while :; do
+	    echo -ne '/\b'
+	    sleep 1
+	    echo -ne '-\b'
+	    sleep 1
+	    echo -ne '\\\b'
+	    sleep 1
+	    echo -ne '|\b'
+	    sleep 1
+	done
+    ) &
+    _TICKPID=$!
+}
+
+
+:  --UpdateFSTAB
+#  fix up the ext2/ext3/ext4 mounts to have user_xattr,acl
+#  remount the offending filesystems.
+#
+#  Also ensure that /boot/efi is root-only accessible on ia64.
+
+UpdateFSTAB() {
+
+    Title " Configure mount options in /etc/fstab"
+
+    local LINE= CHANGED= FS=
+    cp /dev/null /etc/fstab.new
+    while read LINE; do
+	expr "$LINE" : '#|[ 	][ 	]*$' >/dev/null && {
+	    echo "$LINE" >> /etc/fstab.new
+	}
+	set xx $LINE; shift
+	if [ "$3" == "ext3" -o "$3" == "ext2" -o "$3" == "ext4" ]; then
+	    printf "%s\t%s\t%s\t%s\t%s\t%s\n"           \
+		$1 $2 $3 "user_xattr,acl" $5 $6 >> /etc/fstab.new
+	    CHANGED="$CHANGED $2"
+	elif [ "$3" == "vfat" -o "$3" == "fat" ]; then
+	    printf "%s\t%s\t%s\t%s\t%s\t%s\n"           \
+		$1 $2 vfat "uid=0,gid=0,umask=077" $5 $6 >> /etc/fstab.new
+	    CHANGED="$CHANGED $2"
+	else
+	    echo "$LINE" >> /etc/fstab.new
+	fi
+    done < /etc/fstab
+
+    [ "$CHANGED" ] && {
+	Replace /etc/fstab removing /etc/fstab.new
+	for FS in $CHANGED; do
+	    mount $FS -o remount || _FAILURE=1
+	done
+    }
+    [ ! "$_FAILURE" ]
+    # don't add code here
+    return $?
+}
+
+
+:
+: -- %Global Constants
+:
+readonly _ECG=ECG
+readonly _ECG_FULL="Evaluated Configuration Guide"
+
+readonly _LOGFILE=/var/log/cc-config.log
+
+# the following variable gets set by "make install"
+readonly _BASE=--BASE--
+
+readonly _PERMSFILE=$_BASE/perms.conf
+readonly _ROOT_ONLY_FILE=$_BASE/root-only.conf
+
+readonly _SERVICEBASE=/etc/rc.d/init.d
+readonly _SERVICEDIR=/etc/rc.d/rc3.d
+readonly _SERVICE_ENABLE="chkconfig --level 3"
+readonly _SERVICE_CMD=on
+readonly _SVC_CC=cc
+readonly _SVC_REQ=$_BASE/svc-req.conf
+readonly _SVC_OPT=$_BASE/svc-allow.conf
+
+readonly _SSHD_CONFIG=sshd_config
+readonly _SSHD_SYSCONFIG=sshd
+readonly _SSHD_DEST=/etc/ssh
+readonly _XINETD_CONF=xinetd.conf
+readonly _XINETD_DEST=/etc
+readonly _LOGIN_DEFS=login.defs
+readonly _LOGIN_DEFS_DEST=/etc
+readonly _AUDITD_CONF=auditd.conf
+readonly _AUDISP_REMOTE=audisp-remote.conf
+readonly _VSFTPD_CONF=/etc/vsftpd/vsftpd.conf
+readonly _NAMESPACE_CONF=namespace.conf
+readonly _CC_MLS_POLICY=cc_mls_policy.te
+#readonly _RBACSELFTEST_POLICY_DIR=rbac-self-test
+#readonly _RBACSELFTEST_POLICY_MAKEFILE=Makefile
+#readonly _RBACSELFTEST_POLICY=rbacselftest.te
+readonly _CUPS_SERVER=cupsd.conf
+readonly _CUPS_CLIENT=client.conf
+readonly _CUPS_MIMET=mime.types
+readonly _CUPS_MIMEC=mime.convs
+readonly _CUPS_DEST=/etc/cups
+readonly _SYSCTL_ADD=sysctl-additions.conf
+readonly _MODULE_BLACKLIST=module-blacklist.conf
+readonly _PROFILE_ADD=profile-addon
+readonly _PROFILE_INIT_ADD=profile_init-addon
+readonly _CSH_LOGIN_ADD=csh.login-addon
+readonly _CSH_LOGIN_INIT_ADD=csh.login_init-addon
+readonly _SCREENRC=screenrc-addon
+readonly _SCREENRC_DEST=/etc
+readonly _LIBVIRT_CONF=libvirtd.conf
+readonly _LIBVIRT_DEST=/etc/libvirt
+readonly _BASH_CC=cc-configuration.sh
+readonly _CSH_CC=cc-configuration.csh
+readonly _PROFILE_D=/etc/profile.d
+readonly _QEMU_CONF=qemu.conf
+readonly _FSTAB_ADD=fstab-addon
+
+# this will get the name of the arch-dependent packages file
+#  and go readonly in Main()
+_ALLFILES="$_PERMSFILE $_ROOT_ONLY_FILE $_SVC_REQ $_SVC_OPT"
+_ALLFILES="$_ALLFILES $_BASE/$_SVC_CC.service"
+_ALLFILES="$_ALLFILES $_BASE/$_SYSCTL_ADD $_BASE/$_MODULE_BLACKLIST"
+_ALLFILES="$_ALLFILES $_BASE/$_SSHD_CONFIG $_BASE/$_SSHD_SYSCONFIG $_BASE/$_XINETD_CONF"
+_ALLFILES="$_ALLFILES $_BASE/$_LOGIN_DEFS $_BASE/$_AUDITD_CONF"
+_ALLFILES="$_ALLFILES $_BASE/$_AUDISP_REMOTE"
+_ALLFILES="$_ALLFILES $_BASE/$_NAMESPACE_CONF $_BASE/$_CC_MLS_POLICY"
+#_ALLFILES="$_ALLFILES $_BASE/$_RBACSELFTEST_POLICY_DIR/$_RBACSELFTEST_POLICY_MAKEFILE"
+#_ALLFILES="$_ALLFILES $_BASE/$_RBACSELFTEST_POLICY_DIR/$_RBACSELFTEST_POLICY"
+_ALLFILES="$_ALLFILES $_BASE/$_CUPS_SERVER $_BASE/$_CUPS_CLIENT $_BASE/$_CUPS_MIMET $_BASE/$_CUPS_MIMEC"
+_ALLFILES="$_ALLFILES $_BASE/$_PROFILE_ADD $_BASE/$_PROFILE_INIT_ADD $_BASE/$_CSH_LOGIN_ADD $_BASE/$_CSH_LOGIN_INIT_ADD $_BASE/$_SCREENRC $_BASE/$_LIBVIRT_CONF $_BASE/$_BASH_CC $_BASE/$_CSH_CC $_BASE/$_QEMU_CONF $_BASE/$_FSTAB_ADD"
+
+:
+: -- %Global Variables
+:
+# set PATH to include /sbin and /usr/sbin. Be paranoid as well.
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+export PATH
+#
+# these are all default values
+#
+_BOOTFAIL=
+_FAILURE=
+_INTERACTIVE=yes
+_PRINT_ONLY=
+_VERBOSE=
+_TICKPID=
+_PROFILE=
+
+: --Usage
+#  Print summary of supported options
+Usage() {
+    echo "Usage: $0 [OPTIONS]
+Options:
+    -h|--help           Print this message
+    -i|--interactive    Prompt for permission before changes (default)
+    -a|--automated      No prompts, take all default answers.
+                        Must specify either --base or --mls for automated config
+    -q|--quiet          Be less verbose
+    -b|--base		Configure for Base Mode
+    -m|--mls		Configure for MLS Mode
+                        (see $_LOGFILE for detailed msgs)
+Example:
+$0 --mls -a
+" >&2
+    exit 1
+}
+
+[ $_CHECK_SYNTAX_ ] || Main "$@"   # no code after this line!

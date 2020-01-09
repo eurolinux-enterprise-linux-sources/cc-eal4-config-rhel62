@@ -1,0 +1,3 @@
+## CC Base / MLS mode configuration START
+/tmp	/var/tmp	ext4	bind,nodev,noexec,nosuid,user_xattr,acl	0 0
+## CC Base / MLS mode configuration END

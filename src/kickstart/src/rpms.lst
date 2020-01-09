@@ -1,0 +1,89 @@
+# rpms.lst - additional packages to be installed for evaluated config
+#
+# Used by 'Make-kickstart-configs.sh' script.
+#
+# The 'Bi' y/n column is for x86_64 only, and specifies if the i[3456]86 package
+# is to be installed on x86_64 also.
+# 
+# For ppc64 and s390x, list the specific architecture variants to be installed, 
+# the 'Bi' column is ignored for those platforms.
+#
+# Installing on 32bit "ppc" or "s390" systems (or architectures not listed here)
+# is not currently supported.
+#
+# Name			Version-Release		Bi Architectures
+# RHSA-2012:0124
+kernel			2.6.32-220.4.2.el6	n  x86_64 ppc64 s390x
+kernel-firmware		2.6.32-220.4.2.el6	n  noarch
+kernel-headers		2.6.32-220.4.2.el6	n  x86_64 ppc64 s390x
+kernel-devel		2.6.32-220.4.2.el6	n  x86_64 ppc64 s390x
+kernel-bootwrapper	2.6.32-220.4.2.el6	n  ppc64
+# RHBA-2012:0342
+libvirt			0.9.4-23.el6_2.6	n  x86_64
+libvirt-python		0.9.4-23.el6_2.6	n  x86_64
+libvirt-client		0.9.4-23.el6_2.6	n  x86_64
+# RHBA-2012:0338
+selinux-policy		3.7.19-126.el6_2.9	n  noarch
+selinux-policy-mls	3.7.19-126.el6_2.9	n  noarch
+selinux-policy-targeted	3.7.19-126.el6_2.9	n  noarch
+# RHEA-2012:0065
+openssh-clients		5.3p1-70.el6_2.2	n  x86_64 ppc64 s390x
+openssh-server		5.3p1-70.el6_2.2	n  x86_64 ppc64 s390x
+openssh			5.3p1-70.el6_2.2	n  x86_64 ppc64 s390x
+# RHBA-2012:0134
+policycoreutils		2.0.83-19.21.el6_2	n  x86_64 ppc64 s390x
+policycoreutils-newrole	2.0.83-19.21.el6_2	n  x86_64 ppc64 s390x
+policycoreutils-python	2.0.83-19.21.el6_2	n  x86_64 ppc64 s390x
+# RHBA-2012:0331
+dracut			004-256.el6_2.1		n  noarch
+dracut-fips		004-256.el6_2.1		n  noarch
+dracut-kernel		004-256.el6_2.1		n  noarch
+#dracut-fips-aesni	004-256.el6_2.1		n  noarch
+# RHSA-2012:0050
+qemu-img		0.12.1.2-2.209.el6_2.4	n  x86_64
+qemu-kvm		0.12.1.2-2.209.el6_2.4	n  x86_64
+# RHBA-2012:0339
+openswan		2.6.32-10.el6_2		n  x86_64 ppc64 s390x
+# RHBA-2012:0337
+nss-util		3.13.1-3.el6_2		n  x86_64 ppc64 s390x
+nspr			4.8.9-3.el6_2		n  x86_64 ppc64 s390x
+# RHBA-2012:0344
+nss			3.13.1-7.el6_2		n  x86_64 ppc64 s390x
+nss-sysinit		3.13.1-7.el6_2		n  x86_64 ppc64 s390x
+# RHBA-2012:0360
+openssl			1.0.0-20.el6_2.2	y  x86_64 i686 ppc ppc64 s390 s390x
+openssl-devel		1.0.0-20.el6_2.2	y  x86_64 i686 ppc ppc64 s390 s390x
+# RHEA-2012:0486
+libgcrypt		1.4.5-9.el6_2.2		y  x86_64 i686 ppc ppc64 s390 s390x
+#
+### For informational purposes, here is the list of packages upgraded for the IBM RHEL5 evaluation:
+#acl                     2.2.39-2.1.el5           n i386 x86_64 ia64 ppc            s390x
+#aide                    0.12-9.el5               n i386 x86_64 ia64 ppc            s390x
+#audit                   1.3.1-6.el5              n i386 x86_64 ia64 ppc            s390x
+#audit-libs              1.3.1-6.el5              y i386 x86_64 ia64 ppc ppc64 s390 s390x
+#audit-libs-devel        1.3.1-6.el5              y i386 x86_64 ia64 ppc ppc64 s390 s390x
+#audit-libs-python       1.3.1-6.el5              n i386 x86_64 ia64 ppc            s390x
+#cups                    1.2.4-11.8.el5           n i386 x86_64 ia64 ppc            s390x
+#cups-libs               1.2.4-11.8.el5           y i386 x86_64 ia64 ppc ppc64 s390 s390x
+#ipsec-tools             0.6.5-8.el5              n i386 x86_64 ia64 ppc            s390x
+#kernel                  2.6.18-8.1.3.lspp.80.el5 n i686 x86_64 ia64     ppc64      s390x
+#kernel-devel            2.6.18-8.1.3.lspp.80.el5 n i686 x86_64 ia64     ppc64      s390x
+#libacl                  2.2.39-2.1.el5           y i386 x86_64 ia64 ppc ppc64 s390 s390x
+#libacl-devel            2.2.39-2.1.el5           y i386 x86_64 ia64 ppc ppc64 s390 s390x
+#libselinux              1.33.4-4.el5             y i386 x86_64 ia64 ppc ppc64 s390 s390x
+#libselinux-devel        1.33.4-4.el5             n i386 x86_64 ia64 ppc            s390x
+#libselinux-python       1.33.4-4.el5             n i386 x86_64 ia64 ppc            s390x
+#mcstrans                0.2.3-1.el5              n i386 x86_64 ia64 ppc            s390x
+#openssh                 4.3p2-21.el5             n i386 x86_64 ia64 ppc            s390x
+#openssh-clients         4.3p2-21.el5             n i386 x86_64 ia64 ppc            s390x
+#openssh-server          4.3p2-21.el5             n i386 x86_64 ia64 ppc            s390x
+#pam                     0.99.6.2-3.22.el5        y i386 x86_64 ia64 ppc ppc64 s390 s390x
+#pam-devel               0.99.6.2-3.22.el5        n i386 x86_64 ia64 ppc            s390x
+#policycoreutils         1.33.12-8.el5            n i386 x86_64 ia64 ppc            s390x
+#policycoreutils-newrole 1.33.12-8.el5            n i386 x86_64 ia64 ppc            s390x
+#selinux-policy          2.4.6-67.el5             n noarch
+#selinux-policy-devel    2.4.6-67.el5             n noarch
+#selinux-policy-mls      2.4.6-67.el5             n noarch
+#selinux-policy-strict   2.4.6-67.el5             n noarch
+#selinux-policy-targeted 2.4.6-67.el5             n noarch
+#vixie-cron              4.1-68.el5               n i386 x86_64 ia64 ppc            s390x

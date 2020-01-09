@@ -1,0 +1,30 @@
+#%PAM-1.0
+#
+# pam.d/login - PAM login configuration for CC Base Mode
+#               see the Evaluated Configuration Guide for more info
+#
+# If serial terminals are in use, pam_loginuid.so MUST use the 'require_auditd'
+# option for MLS Mode compliant fail-secure auditing.
+# The default mode assumes that all terminals are in physically secure
+# locations.
+# 
+
+auth       [user_unknown=ignore success=ok ignore=ignore default=bad]     pam_securetty.so
+auth       include      system-auth
+
+account    required     pam_nologin.so
+account    include      system-auth
+
+password   include      system-auth
+
+# pam_selinux.so close should be the first session rule
+session    required     pam_selinux.so close
+session    required     pam_loginuid.so
+session    optional     pam_console.so
+# pam_selinux.so open should only be followed by sessions to be
+# executed in the user context
+session    required     pam_selinux.so open select_context
+session    required	pam_namespace.so
+session    optional	pam_keyinit.so force revoke
+session    include      system-auth
+#-session   optional	pam_ck_connector.so

@@ -1,0 +1,25 @@
+#
+## CC Base / MLS mode configuration START
+#
+# Modified configuration for CC Base / MLS mode compliance
+#
+# The following line configures the inactivity threshold before activating
+# the screensaver. To enforce the screen saver, the screen command needs
+# to be executed, such as from /etc/profile - see
+# /etc/profile for an example on how to automatically start screen
+#
+# You MAY change that setting to any value
+#
+idle 600 lockscreen
+#
+# The following setting is optional and causes screen to terminate if it
+# receives a SIGHUP. This ensures that screen is terminated upon each
+# logout.
+#
+autodetach off
+#
+# Spawn a login shell for the user to ensure that ~/.bash* files are read
+# and loaded.
+shell -$SHELL
+#
+## CC Base / MLS mode configuration END

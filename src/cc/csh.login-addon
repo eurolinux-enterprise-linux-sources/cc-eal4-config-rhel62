@@ -1,0 +1,41 @@
+#
+## CC Base / MLS mode configuration START
+#
+# DISA STIG requirement GEN001780
+mesg n
+#
+# Enable the following lines to enforce a screen saver for every
+# user after a given period of inactivity. The configuration of the
+# inactivity threshold is done in /etc/screenrc by modifying the
+# value in the line:
+#
+#	idle XXX lockscreen
+#
+# where XXX is the threshold value in seconds
+#
+# You MAY disable the screen functionality completely by commenting the
+# following out if the functionality of locking the screen is not desired.
+# If you disable screen here, make sure you also remove the onintr command
+# at the beginning of this file.
+#
+# The pipe directories for the screen operation must reside in the home
+# directories due to:
+# - screen is not SGID, preventing the use of a common directory
+# - in MLS mode, a common directory would be a violation of the MLS policy
+# Note, that directory is automatically created by screen if it does not exist
+setenv SCREENDIR $HOME/.screen
+#
+# Note: waiting for 10 seconds allows the user to read the banner information
+#
+if ($?loginsh && -w "`tty`" && "$TERM" != "screen" ) then
+	onintr -
+	echo -n 'Starting session in 10 seconds (press CTRL+C to skip waiting)'
+	sleep 10
+
+	# if you want to prevent users to set their own threshold value, you
+	# have to append the option "-c /dev/null" to the following call
+	# which prevents the loading of ~/.screenrc
+	exec screen
+endif
+#
+## CC Base / MLS mode configuration END

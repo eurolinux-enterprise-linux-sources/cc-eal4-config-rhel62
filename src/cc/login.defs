@@ -1,0 +1,78 @@
+### /etc/login.defs
+# Global user account settings for the Common Criteria Base / MLS
+# Mode configuration.
+#
+# *REQUIRED*
+#   Directory where mailboxes reside, _or_ name of file, relative to the
+#   home directory.  If you _do_ define both, MAIL_DIR takes precedence.
+#   QMAIL_DIR is for Qmail
+#
+#   The setting is used only when creating or deleting users, and has
+#   no effect on the mail delivery system. MAY be changed as required.
+#
+#QMAIL_DIR      Maildir
+MAIL_DIR        /var/spool/mail
+#MAIL_FILE      .mail
+#
+# Password aging controls:
+#
+#   PASS_MAX_DAYS    Maximum number of days a password may be used.
+#   PASS_MIN_DAYS    Minimum number of days allowed between password changes.
+#   PASS_MIN_LEN     Minimum acceptable password length.
+#   PASS_WARN_AGE    Number of days warning given before a password expires.
+#
+# The evaluated configuration constraints are:
+# PASS_MAX_DAYS MAY be changed, must be <= 60
+# PASS_MAX_DAYS MAY be changed, 0 < PASS_MIN_DAYS < PASS_MAX_DAYS
+# PASS_MIN_LEN has no effect in the evaluated configuration
+# PASS_WARN_AGE MAY be changed
+PASS_MAX_DAYS    60
+PASS_MIN_DAYS    1
+PASS_MIN_LEN     5
+PASS_WARN_AGE    7
+#
+# Min/max values for automatic uid selection in useradd
+#
+# MAY be changed, 100 < UID_MIN < UID_MAX < 65535
+#
+UID_MIN                    500
+UID_MAX                  60000
+#
+# Min/max values for automatic gid selection in groupadd
+#
+# MAY be changed, 100 < GID_MIN < GID_MAX < 65535
+#
+GID_MIN                    500
+GID_MAX                  60000
+#
+# If defined, this command is run when removing a user.
+# It should remove any at/cron/print jobs etc. owned by
+# the user to be removed (passed as the first argument).
+#
+# MAY be activated as described in the "Managing user accounts"
+# section of the ECG.
+#
+#USERDEL_CMD     /usr/sbin/userdel_local
+#
+# If useradd should create home directories for users by default
+# On RH systems, we do. This option is overridden with the -m flag on
+# useradd command line.
+#
+# MAY be changed.
+#
+CREATE_HOME      yes
+#
+# The permission mask is initialized to this value. If not specified, 
+# the permission mask will be initialized to 022.
+#
+# MAY be changed.
+#
+UMASK           077
+
+#
+# This enables userdel to remove user groups if no members exist.
+#
+USERGROUPS_ENAB yes
+
+# Use SHA512 to encrypt password.
+ENCRYPT_METHOD SHA512
